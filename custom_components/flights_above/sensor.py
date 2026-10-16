@@ -14,6 +14,11 @@ from .coordinator import FlightsAboveCoordinator
 
 # Attributes copied straight from the flight dict onto a slot sensor.
 _FLIGHT_ATTRS = (
+    "airline_name",
+    "airline_icao",
+    "airline_iata",
+    "airline_country",
+    "airline_country_iso",
     "registration",
     "aircraft_type",
     "latitude",

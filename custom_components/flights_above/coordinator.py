@@ -245,6 +245,17 @@ def _clean_text(value, max_len: int = MAX_TEXT_LEN) -> str | None:
     return text[:max_len] if text else None
 
 
+_AIRLINE_CALLSIGN_RE = re.compile(r"^([A-Z]{3})[0-9]")
+
+
+def _airline_prefix(callsign) -> str | None:
+    """ICAO airline designator from an airline-style callsign, else None."""
+    if not isinstance(callsign, str):
+        return None
+    match = _AIRLINE_CALLSIGN_RE.match(callsign.strip().upper())
+    return match.group(1) if match else None
+
+
 def _safe_callsign(value) -> str:
     """Alphanumeric-only, uppercased callsign/hex for safe use in a URL path."""
     if not value:
@@ -475,6 +486,14 @@ class FlightsAboveCoordinator(DataUpdateCoordinator):
             "people_on_board": people_on_board,
             "distance_km": round(distance_km, 1),
             "last_seen": now,
+            # Airline: from the route lookup when known; otherwise the ICAO
+            # prefix of an airline-style callsign (e.g. WZZ337 -> WZZ) so the
+            # card can still show a logo.
+            "airline_name": None,
+            "airline_icao": _airline_prefix(display_callsign),
+            "airline_iata": None,
+            "airline_country": None,
+            "airline_country_iso": None,
             # Route / progress placeholders, filled in below when available.
             "origin_name": None,
             "origin_iata": None,
@@ -502,6 +521,15 @@ class FlightsAboveCoordinator(DataUpdateCoordinator):
             return None
 
         if route:
+            for key in (
+                "airline_name",
+                "airline_icao",
+                "airline_iata",
+                "airline_country",
+                "airline_country_iso",
+            ):
+                if route.get(key):
+                    flight[key] = route[key]
             flight.update(
                 {
                     "origin_name": route["origin_name"],
@@ -634,9 +662,16 @@ class FlightsAboveCoordinator(DataUpdateCoordinator):
 
         origin = flightroute.get("origin")
         destination = flightroute.get("destination")
+        airline = flightroute.get("airline")
         origin = origin if isinstance(origin, dict) else {}
         destination = destination if isinstance(destination, dict) else {}
+        airline = airline if isinstance(airline, dict) else {}
         return {
+            "airline_name": _clean_text(airline.get("name"), 60),
+            "airline_icao": _clean_text(airline.get("icao"), 4),
+            "airline_iata": _clean_text(airline.get("iata"), 3),
+            "airline_country": _clean_text(airline.get("country"), 40),
+            "airline_country_iso": _clean_text(airline.get("country_iso"), 2),
             "origin_name": _clean_text(origin.get("name")),
             "origin_iata": _clean_text(origin.get("iata_code"), 4),
             "origin_icao": _clean_text(origin.get("icao_code"), 4),
