@@ -307,9 +307,20 @@ class FlightsAboveCoordinator(DataUpdateCoordinator):
             if len(radar) < MAX_RADAR_BLIPS:
                 heading = _finite(ac.get("track"))
                 alt = _finite(ac.get("alt_baro"))
+                gs = _finite(ac.get("gs"))
                 radar.append(
                     {
                         "callsign": _safe_callsign(ac.get("flight")) or "?",
+                        # Stable id + position + speed for the map view
+                        # (the card extrapolates movement between polls).
+                        "hex": _safe_callsign(ac.get("hex")) or None,
+                        "lat": round(lat, 4),
+                        "lon": round(lon, 4),
+                        "speed_kmh": (
+                            round(gs * KM_PER_NM)
+                            if gs is not None and 0 <= gs <= 1500
+                            else None
+                        ),
                         "distance_km": round(dist, 1),
                         "bearing": round(
                             bearing_deg(self.latitude, self.longitude, lat, lon)
