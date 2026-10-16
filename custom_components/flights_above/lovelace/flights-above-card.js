@@ -5,7 +5,7 @@
  * flights beyond the first few.
  */
 
-const CARD_VERSION = "2.1.1-ivan";
+const CARD_VERSION = "2.2.0-ivan";
 
 const LEAFLET_JS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js";
 const LEAFLET_CSS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css";
@@ -21,6 +21,26 @@ const ESC_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&
 function esc(value) {
   if (value === null || value === undefined) return "";
   return String(value).replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+}
+
+// Airline logos by ICAO airline code, tried in order until one loads.
+// Community-maintained set (Jxck-S/airline-logos): square icons first,
+// then the wider FlightAware-style logos.
+const DEFAULT_LOGO_URLS = [
+  "https://raw.githubusercontent.com/Jxck-S/airline-logos/main/radarbox_logos/{icao}.png",
+  "https://raw.githubusercontent.com/Jxck-S/airline-logos/main/flightaware_logos/{icao}.png",
+];
+
+// ICAO airline designator from an airline-style callsign (WZZ337 -> WZZ).
+function airlinePrefix(callsign) {
+  const m = /^([A-Z]{3})[0-9]/.exec(String(callsign || "").trim().toUpperCase());
+  return m ? m[1] : null;
+}
+
+// ISO 3166 alpha-2 code -> flag emoji ("HU" -> regional indicators).
+function flagEmoji(iso) {
+  if (!iso || !/^[A-Za-z]{2}$/.test(iso)) return "";
+  return String.fromCodePoint(...[...iso.toUpperCase()].map((c) => 127397 + c.charCodeAt(0)));
 }
 
 // Load Leaflet once per page, shared by every card instance.
@@ -113,6 +133,10 @@ class FlightsAboveCard extends HTMLElement {
           ? Number(config.select_seconds)
           : 30,
       departed: config.departed === "hide" ? "hide" : "dim",
+      show_airline: config.show_airline !== false,
+      logo_urls: Array.isArray(config.logo_urls) && config.logo_urls.length
+        ? config.logo_urls.map(String)
+        : DEFAULT_LOGO_URLS,
       tile_url: typeof config.tile_url === "string" && config.tile_url ? config.tile_url : null,
       tile_attribution: typeof config.tile_attribution === "string" ? config.tile_attribution : null,
     };
@@ -235,6 +259,41 @@ class FlightsAboveCard extends HTMLElement {
 
   /* ---------------- flight detail (unchanged layout) ---------------- */
 
+  _logoUrl(icao, step) {
+    const tpl = this._config.logo_urls[step];
+    return tpl ? tpl.replace("{icao}", encodeURIComponent(icao)) : null;
+  }
+
+  // Logo tile; if every URL fails the tile hides itself (see _onImgError).
+  _logo(icao, size) {
+    if (!this._config.show_airline || !icao || !/^[A-Z0-9]{2,4}$/.test(icao)) return "";
+    const url = this._logoUrl(icao, 0);
+    if (!url) return "";
+    return `<span class="logo" style="width:${size}px;height:${size}px"><img src="${esc(url)}" data-icao="${esc(icao)}" data-step="0" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
+  }
+
+  _onImgError(ev) {
+    const img = ev.target;
+    if (!img || img.tagName !== "IMG" || !img.dataset.icao) return;
+    const step = Number(img.dataset.step || 0) + 1;
+    const next = this._logoUrl(img.dataset.icao, step);
+    if (next) {
+      img.dataset.step = String(step);
+      img.src = next;
+    } else if (img.parentElement) {
+      img.parentElement.style.display = "none";
+    }
+  }
+
+  _airlineLine(a) {
+    if (!this._config.show_airline) return "";
+    const flag = flagEmoji(a.airline_country_iso);
+    const text = a.airline_name || a.airline_country || "";
+    if (!text && !flag) return "";
+    const title = a.airline_country && a.airline_name ? ` title="${esc(a.airline_country)}"` : "";
+    return `<div class="airline"${title}>${flag ? `<span class="flag">${flag}</span>` : ""}${esc(text)}</div>`;
+  }
+
   _renderFlight(stateObj, departed = false) {
     const a = stateObj.attributes;
     const callsign = esc(stateObj.state);
@@ -273,7 +332,13 @@ class FlightsAboveCard extends HTMLElement {
     return `
       <div class="flight ${departed ? "departed" : ""}">
         <div class="row head">
-          <div class="callsign">${callsign}</div>
+          <div class="who">
+            ${this._logo(a.airline_icao || airlinePrefix(stateObj.state), 34)}
+            <div class="whotext">
+              <div class="callsign">${callsign}</div>
+              ${this._airlineLine(a)}
+            </div>
+          </div>
           ${subtitle ? `<div class="subtitle">${subtitle}</div>` : ""}
         </div>
         <div class="row airports">
@@ -321,7 +386,7 @@ class FlightsAboveCard extends HTMLElement {
         : "";
     return `
       <div class="crow ${departed ? "departed" : ""}" data-cs="${esc(stateObj.state)}">
-        <span class="ccs">${esc(stateObj.state)}</span>
+        <span class="ccs">${this._logo(a.airline_icao || airlinePrefix(stateObj.state), 20)}<span>${esc(stateObj.state)}</span></span>
         <div class="cmid">
           <div class="croute">${esc(origin)} → ${esc(dest)}</div>
           <div class="cbar"><i style="width:${pct === null ? 0 : pct}%"></i></div>
@@ -339,7 +404,12 @@ class FlightsAboveCard extends HTMLElement {
     if (b.heading !== null && b.heading !== undefined) chips.push(`Heading ${b.heading}°`);
     return `
       <div class="flight">
-        <div class="row head"><div class="callsign">${esc(b.callsign)}</div></div>
+        <div class="row head">
+          <div class="who">
+            ${this._logo(airlinePrefix(b.callsign), 34)}
+            <div class="whotext"><div class="callsign">${esc(b.callsign)}</div></div>
+          </div>
+        </div>
         <div class="summary">No route details for this aircraft yet, it is not one of the tracked flights.</div>
         ${chips.length ? `<div class="chips">${chips.map((c) => `<span>${esc(c)}</span>`).join("")}</div>` : ""}
       </div>`;
@@ -818,6 +888,7 @@ class FlightsAboveCard extends HTMLElement {
         if (hit) this._select(hit.getAttribute("data-cs"));
       });
     }
+    this.shadowRoot.addEventListener("error", (ev) => this._onImgError(ev), true);
     this._skeleton = true;
   }
 
@@ -963,7 +1034,19 @@ class FlightsAboveCard extends HTMLElement {
       .flight { padding: 12px 0; border-top: 1px solid var(--divider-color); }
       .content > .flight:first-child { border-top: none; }
       .row { display: flex; align-items: baseline; justify-content: space-between; }
-      .head { margin-bottom: 8px; }
+      .head { margin-bottom: 8px; align-items: center; gap: 10px; }
+      .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .whotext { min-width: 0; }
+      .airline {
+        font-size: 0.78rem; color: var(--secondary-text-color); margin-top: 1px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .airline .flag { margin-right: 5px; }
+      .logo {
+        display: inline-flex; flex: none; align-items: center; justify-content: center;
+        background: #fff; border-radius: 6px; overflow: hidden;
+      }
+      .logo img { width: 100%; height: 100%; object-fit: contain; padding: 2px; box-sizing: border-box; }
       .callsign {
         font-size: 1.25rem; font-weight: 600; letter-spacing: 0.5px; color: var(--primary-text-color);
       }
@@ -1030,12 +1113,16 @@ class FlightsAboveCard extends HTMLElement {
 
       .compact { border-top: 1px solid var(--divider-color); padding-top: 4px; }
       .crow {
-        display: grid; grid-template-columns: 84px minmax(0, 1fr) 60px; gap: 10px;
+        display: grid; grid-template-columns: 112px minmax(0, 1fr) 60px; gap: 10px;
         align-items: center; padding: 8px 0; cursor: pointer;
         border-top: 1px solid var(--divider-color); font-size: 0.85rem;
       }
       .compact .crow:first-child { border-top: none; }
-      .ccs { font-weight: 600; color: var(--primary-text-color); }
+      .ccs {
+        font-weight: 600; color: var(--primary-text-color);
+        display: flex; align-items: center; gap: 8px; min-width: 0;
+      }
+      .ccs > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .croute { color: var(--secondary-text-color); font-size: 0.8rem; }
       .cbar {
         position: relative; height: 3px; margin-top: 5px; border-radius: 3px;
